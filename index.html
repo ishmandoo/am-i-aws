@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AWS IP Range Checker</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <h1>AWS IP Range Checker</h1>
+    <label for="ip-address">IP Address:</label>
+    <input type="text" id="ip-address" placeholder="Enter an IP address">
+    <button id="check-ip">Check IP</button>
+    <p id="result"></p>
+
+    <script>
+        // Convert IP address to binary
+        function ipToBinary(ip) {
+            return ip.split('.').map(octet => parseInt(octet).toString(2).padStart(8, '0')).join('');
+        }
+
+        // Parse CIDR block and return IP address and prefix length
+        function parseCIDR(cidr) {
+            const [ip, prefixLength] = cidr.split('/');
+            return { ip: ipToBinary(ip), prefixLength: parseInt(prefixLength) };
+        }
+
+        // Trie node
+        class TrieNode {
+            constructor() {
+                this.children = {};
+                this.isEndOfCIDR = false;
+                this.region = "";
+                this.service = "";
+            }
+        }
+
+        // Trie class
+        class Trie {
+            constructor() {
+                this.root = new TrieNode();
+            }
+
+            // Insert a CIDR block into the trie
+            insert(cidr, region, service) {
+                let { ip, prefixLength } = parseCIDR(cidr);
+                let node = this.root;
+                for (let i = 0; i < prefixLength; i++) {
+                    const bit = ip[i];
+                    if (!node.children[bit]) {
+                        node.children[bit] = new TrieNode();
+                    }
+                        node = node.children[bit];
+                }
+                node.isEndOfCIDR = true;
+                node.region = region;
+                node.service = service;
+            }
+
+            search(ip) {
+                let binaryIP = ipToBinary(ip);
+                let node = this.root;
+                for (let i = 0; i < binaryIP.length; i++) {
+                    const bit = binaryIP[i];
+                    if (!node.children[bit]) {
+                        return false;
+                    }
+                    node = node.children[bit];
+                    if (node.isEndOfCIDR) {
+                        return node;
+                    }
+                }
+                return false;
+            }
+        }
+
+        // Read the JSON file and build the trie
+        async function buildTrieFromJSON(jsonFile) {
+            const response = await fetch(jsonFile);
+            const data = await response.json();
+            const trie = new Trie();
+            data.prefixes.forEach(prefix => trie.insert(prefix.ip_prefix, prefix.region, prefix.service));
+            return trie;
+        }
+
+        const ipAddressInput = document.getElementById('ip-address');
+        const checkIpButton = document.getElementById('check-ip');
+        const resultText = document.getElementById('result');
+
+        let trie;
+
+        buildTrieFromJSON('https://ip-ranges.amazonaws.com/ip-ranges.json').then(awsTrie => {
+            trie = awsTrie;
+            console.log(trie);
+            checkIpButton.disabled = false;
+        });
+
+        checkIpButton.addEventListener('click', () => {
+            const ipAddress = ipAddressInput.value.trim();
+            if (trie){
+                const node = trie.search(ipAddress);
+                if (node) {
+                    resultText.textContent = `${ipAddress} is within an AWS IP range for region ${node.region} and service ${node.service}.`;
+                } else {
+                    resultText.textContent = `${ipAddress} is not within an AWS IP range.`;
+                }
+            }
+        });
+    </script>
+</body>
+</html>
